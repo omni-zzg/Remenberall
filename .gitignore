@@ -1,0 +1,23 @@
+# 密钥与环境：永不入库
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# 数据
+data/
+*.sqlite
+*.sqlite3
+*.db
+
+# 编辑器/系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

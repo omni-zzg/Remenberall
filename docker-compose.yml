@@ -1,0 +1,16 @@
+services:
+  remenberall:
+    build: .
+    container_name: remenberall
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      # SQLite 数据 + 运行时配置落盘，容器重建不丢数据
+      - ./data:/app/data
+    tty: true
+    # 日志回滚，避免无限增长
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
