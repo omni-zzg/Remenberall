@@ -18,7 +18,6 @@ import threading
 
 import lark_oapi as lark
 from lark_oapi.event.callback.model.p2_card_action_trigger import (
-    CallBackToast,
     P2CardActionTriggerResponse,
 )
 
@@ -110,9 +109,10 @@ def _new_ws(conn: sqlite3.Connection, feishu: FeishuClient):
         value = _card_value(data)
         logger.info("卡片回调: %s", value)
         toast = handlers.handle_card_action(conn, feishu, open_id, value)
-        return P2CardActionTriggerResponse(
-            toast=CallBackToast(type="success", content=toast or "已处理"),
-        )
+        # 注意：这两个类只接受「普通 dict」形式的 d 参数，传关键字或已构造对象都会抛错
+        return P2CardActionTriggerResponse({
+            "toast": {"type": "success", "content": toast or "已处理"},
+        })
 
     event_handler = (
         lark.EventDispatcherHandler.builder("", "")

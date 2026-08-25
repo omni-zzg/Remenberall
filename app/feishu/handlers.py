@@ -5,13 +5,11 @@
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import sqlite3
 from datetime import datetime, timedelta
 
 from .. import db, due, sm2
-from ..ai.extract import extract_cards
 from . import cards as card_builder
 
 logger = logging.getLogger(__name__)
@@ -38,21 +36,11 @@ def current_user(conn: sqlite3.Connection) -> str:
 # ---------- 录入 ----------
 
 def ingest_text(conn: sqlite3.Connection, feishu, open_id: str, text: str) -> None:
-    """用户发来普通文本 → 存 entry → DeepSeek 抽取 → 插入草稿 → 推送草稿卡。"""
+    """用户发来普通文本 → 一条消息一张卡，内容原封不动 → 推送一张待确认卡。"""
     text = text.strip()
     if not text:
         return
-    logger.info("开始抽取，文本长度=%d", len(text))
-    try:
-        candidates = extract_cards(text)
-    except Exception as e:  # noqa: BLE001
-        logger.exception("抽取失败")
-        feishu.send_text(open_id, f"⚠️ 提炼失败：{e}")
-        return
-
-    if not candidates:
-        feishu.send_text(open_id, "没能从这段内容里提炼出知识点，换一段试试？")
-        return
+    logger.info("录入内容，长度=%d", len(text))
 
     with db.transaction(conn):
         cur = conn.execute(
@@ -60,17 +48,15 @@ def ingest_text(conn: sqlite3.Connection, feishu, open_id: str, text: str) -> No
             (text,),
         )
         entry_id = cur.lastrowid
-        for cand in candidates:
-            conn.execute(
-                "INSERT INTO cards(entry_id, question, answer, summary, mode, status) "
-                "VALUES(?, ?, ?, ?, 'qa', 'draft')",
-                (entry_id, cand["question"], cand["answer"], cand.get("summary", "")),
-            )
+        conn.execute(
+            "INSERT INTO cards(entry_id, question, answer, summary, mode, status) "
+            "VALUES(?, ?, '', '', 'qa', 'draft')",
+            (entry_id, text),
+        )
 
     drafts = _pending_drafts(conn, entry_id=entry_id)
-    total = len(drafts)
     for i, c in enumerate(drafts, start=1):
-        feishu.send_card(open_id, card_builder.draft_card(c, i, total))
+        feishu.send_card(open_id, card_builder.draft_card(c, i, len(drafts)))
 
 
 def _pending_drafts(conn: sqlite3.Connection, entry_id: int | None = None) -> list[dict]:
@@ -109,15 +95,10 @@ def handle_card_action(conn: sqlite3.Connection, feishu, open_id: str, value: di
         return "卡片不存在"
     c = dict(c)
 
-    if action in ("confirm", "readonly"):
-        return _do_confirm(conn, feishu, open_id, card_id, action)
+    if action == "confirm":
+        return _do_confirm(conn, feishu, open_id, card_id)
     if action == "discard":
         return _do_discard(conn, feishu, open_id, card_id)
-    if action == "rewrite":
-        return _do_rewrite(conn, feishu, open_id, c)
-    if action == "reveal":
-        feishu.send_card(open_id, card_builder.review_answer_card(c))
-        return "答案已展开"
     if action in sm2.RATING_QUALITY:
         if _recently_rated(conn, card_id, action):
             return "已记录过，请勿重复点击"
@@ -138,15 +119,14 @@ def _recently_rated(conn: sqlite3.Connection, card_id: int, rating: str) -> bool
     return datetime.now() - t < timedelta(seconds=_RATING_DEDUP_SECONDS)
 
 
-def _do_confirm(conn: sqlite3.Connection, feishu, open_id: str, card_id: int, action: str) -> str:
+def _do_confirm(conn: sqlite3.Connection, feishu, open_id: str, card_id: int) -> str:
     try:
-        mode = "qa" if action == "confirm" else "readonly"
-        due.confirm_card(conn, card_id, mode=mode)
+        due.confirm_card(conn, card_id, mode="qa")
     except KeyError as e:
         feishu.send_card(open_id, card_builder.text_card(str(e), template="orange"))
         return "处理失败"
-    feishu.send_card(open_id, card_builder.draft_done_card(confirmed=1, mode=mode))
-    return "已确认，进入复习队列" if mode == "qa" else "已确认，仅重读不出题"
+    feishu.send_card(open_id, card_builder.draft_done_card(confirmed=1, mode="qa"))
+    return "已确认，进入复习队列"
 
 
 def _do_discard(conn: sqlite3.Connection, feishu, open_id: str, card_id: int) -> str:
@@ -157,38 +137,6 @@ def _do_discard(conn: sqlite3.Connection, feishu, open_id: str, card_id: int) ->
         )
     feishu.send_card(open_id, card_builder.draft_discarded_card())
     return "已丢弃"
-
-
-def _do_rewrite(conn: sqlite3.Connection, feishu, open_id: str, c: dict) -> str:
-    """重写：按原文重新提炼，生成一批新草稿（原草稿转 archived）。"""
-    entry = conn.execute("SELECT source_text FROM entries WHERE id=?", (c.get("entry_id"),)).fetchone()
-    if not entry:
-        feishu.send_card(open_id, card_builder.text_card("找不到原文，无法重写。", template="orange"))
-        return "找不到原文"
-    with db.transaction(conn):
-        conn.execute(
-            "UPDATE cards SET status='archived', updated_at=datetime('now','localtime') WHERE id=?",
-            (c["id"],),
-        )
-
-    async def _rewrite():
-        try:
-            candidates = await asyncio.to_thread(
-                extract_cards, entry["source_text"], "上次提炼不理想，请重新提炼，生成更准的卡片。"
-            )
-        except Exception as e:  # noqa: BLE001
-            feishu.send_text(open_id, f"⚠️ 重写失败：{e}")
-            return
-        with db.transaction(conn):
-            for cand in candidates:
-                conn.execute(
-                    "INSERT INTO cards(entry_id, question, answer, summary, mode, status) VALUES(?, ?, ?, ?, 'qa', 'draft')",
-                    (c["entry_id"], cand["question"], cand["answer"], cand.get("summary", "")),
-                )
-        push_drafts(conn, feishu, open_id)
-
-    asyncio.create_task(_rewrite())
-    return "正在重新提炼，稍后推送新草稿"
 
 
 # ---------- 命令 ----------
@@ -246,7 +194,7 @@ def _cmd_spot(conn: sqlite3.Connection, feishu, open_id: str) -> None:
         return
     feishu.send_text(open_id, f"随机抽查 {len(rows)} 张：")
     for r in rows:
-        feishu.send_card(open_id, card_builder.review_question_card(dict(r)))
+        feishu.send_card(open_id, card_builder.review_card(dict(r)))
 
 
 def _cmd_readonly(conn: sqlite3.Connection, feishu, open_id: str, rest: str) -> None:
@@ -294,12 +242,7 @@ def push_review(conn: sqlite3.Connection, feishu, open_id: str, limit: int | Non
         feishu.send_text(open_id, "现在没有到期卡，休息一下 ☕")
         return
 
-    cards_to_send = []
-    for c in due_cards:
-        if c["mode"] == "readonly":
-            cards_to_send.append(card_builder.readonly_card(c))
-        else:
-            cards_to_send.append(card_builder.review_question_card(c))
+    cards_to_send = [card_builder.review_card(c) for c in due_cards]
 
     remaining = due.due_count(conn)
     ok, total = feishu.push_cards(open_id, cards_to_send)

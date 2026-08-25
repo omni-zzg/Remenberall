@@ -1,6 +1,7 @@
-"""端到端流程测试（伪造飞书与 AI，不触网）。
+"""端到端流程测试（伪造飞书，不触网）。
 
-覆盖：录入 → AI 提炼（一条消息一张卡）→ 草稿卡 → 确认 → 到期 → 复习反馈。
+新规则：一条消息 = 一张知识卡，内容原封不动，无 AI 抽取。
+覆盖：录入 → 待确认卡 → 确认 → 到期 → 复习反馈。
 """
 import sqlite3
 
@@ -28,27 +29,23 @@ class FakeFeishu:
         return len(cards), len(cards)
 
 
-FAKE_CARD = {"question": "什么是 SM-2？", "answer": "SuperMemo 的间隔重复算法", "summary": "SM-2 是经典 SRS 算法"}
-
-
 @pytest.fixture
-def env(tmp_path, monkeypatch):
+def env(tmp_path):
     conn = db.connect(tmp_path / "test.sqlite3")
     db.init_db(conn)
-    feishu = FakeFeishu()
-    # handlers 里是 `from ..ai.extract import extract_cards`（本地绑定），所以 patch 这里
-    monkeypatch.setattr(h, "extract_cards", lambda text, instruction=None: [dict(FAKE_CARD)])
-    return conn, feishu
+    return conn, FakeFeishu()
 
 
 def test_full_flow(env):
     conn, feishu = env
     open_id = "ou_test"
 
-    # 1. 录入 → 一条消息只产生一张草稿
-    h.ingest_text(conn, feishu, open_id, "这是一段关于记忆的文章……")
+    # 1. 录入 → 一条消息一张卡，内容原封不动
+    text = "艾宾浩斯遗忘曲线指出信息在学习后很快就会遗忘。"
+    h.ingest_text(conn, feishu, open_id, text)
     drafts = conn.execute("SELECT * FROM cards WHERE status='draft'").fetchall()
     assert len(drafts) == 1
+    assert drafts[0]["question"] == text
     assert sum(1 for k, _ in feishu.sent if k == "card") == 1
 
     # 2. 确认
@@ -57,7 +54,6 @@ def test_full_flow(env):
     assert "确认" in toast
     card = conn.execute("SELECT * FROM cards WHERE id=?", (cid,)).fetchone()
     assert card["status"] == "active"
-    assert card["mode"] == "qa"
 
     # 3. 到期后可复习（确认后 due_at=now，应能被 /复习 推出）
     feishu.sent.clear()
@@ -66,10 +62,8 @@ def test_full_flow(env):
     assert len(sent_cards) >= 1
     assert any(c.get("header", {}).get("title", {}).get("content", "").startswith("复习") for c in sent_cards)
 
-    # 4. 两阶段：显示答案 → 反馈
-    h.handle_card_action(conn, feishu, open_id, {"a": "reveal", "id": cid})
+    # 4. 反馈
     h.handle_card_action(conn, feishu, open_id, {"a": "remembered", "id": cid})
-
     log = conn.execute("SELECT * FROM review_log WHERE card_id=?", (cid,)).fetchall()
     assert len(log) == 1
     assert log[0]["rating"] == "remembered"
@@ -84,20 +78,19 @@ def test_full_flow(env):
     assert before == after
 
 
-def test_discard_and_readonly(env):
+def test_discard_then_confirm(env):
     conn, feishu = env
-    # 第一条消息 → 草稿，丢弃
-    h.ingest_text(conn, feishu, "ou_t", "内容……")
+    # 第一条 → 丢弃
+    h.ingest_text(conn, feishu, "ou_t", "内容一……")
     draft = conn.execute("SELECT * FROM cards WHERE status='draft'").fetchone()
     h.handle_card_action(conn, feishu, "ou_t", {"a": "discard", "id": draft["id"]})
     assert conn.execute("SELECT status FROM cards WHERE id=?", (draft["id"],)).fetchone()["status"] == "archived"
 
-    # 第二条消息 → 草稿，仅重读
-    h.ingest_text(conn, feishu, "ou_t", "另一条内容……")
+    # 第二条 → 确认
+    h.ingest_text(conn, feishu, "ou_t", "内容二……")
     draft2 = conn.execute("SELECT * FROM cards WHERE status='draft' ORDER BY id DESC").fetchone()
-    h.handle_card_action(conn, feishu, "ou_t", {"a": "readonly", "id": draft2["id"]})
+    h.handle_card_action(conn, feishu, "ou_t", {"a": "confirm", "id": draft2["id"]})
     card = conn.execute("SELECT * FROM cards WHERE id=?", (draft2["id"],)).fetchone()
-    assert card["mode"] == "readonly"
     assert card["status"] == "active"
 
 
