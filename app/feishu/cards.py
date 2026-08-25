@@ -97,14 +97,6 @@ def review_feedback_card(c: dict, rating: str, next_interval: float) -> dict:
     )
 
 
-def review_done_card(total: int, remaining: int) -> dict:
-    if remaining > 0:
-        body = f"本轮 {total} 张复习完，还剩 {remaining} 张未处理，下一时段继续。"
-    else:
-        body = f"本轮 {total} 张全部复习完 🎉"
-    return _card("本轮复习完成", [_markdown(body)], template="green")
-
-
 # ---------- 其他 ----------
 
 def stats_card(stats: dict) -> dict:

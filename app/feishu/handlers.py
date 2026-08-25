@@ -243,13 +243,9 @@ def push_review(conn: sqlite3.Connection, feishu, open_id: str, limit: int | Non
         return
 
     cards_to_send = [card_builder.review_card(c) for c in due_cards]
-
-    remaining = due.due_count(conn)
-    ok, total = feishu.push_cards(open_id, cards_to_send)
-    feishu.send_card(
-        open_id,
-        card_builder.review_done_card(total, remaining - len(due_cards)),
-    )
+    feishu.push_cards(open_id, cards_to_send)
+    # 不推「完成」卡：用户没答完之前说"完成"很误导。
+    # 答完与否由复习卡按钮的反馈自然体现。
 
 
 def push_spot_check(conn: sqlite3.Connection, feishu, open_id: str) -> None:
