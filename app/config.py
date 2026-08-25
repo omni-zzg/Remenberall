@@ -45,6 +45,7 @@ class Settings:
     # 备份
     backup_time: str = "03:10"
     backup_doc_id: str = ""
+    backup_wiki_token: str = ""  # 可选：归档到指定 wiki 页面（自动解析成 docx）
 
     # 数据
     data_dir: Path = field(default_factory=lambda: _resolve_data_dir("./data"))
@@ -86,6 +87,7 @@ def load_settings() -> Settings:
         timezone=os.environ.get("TIMEZONE", "Asia/Shanghai"),
         backup_time=os.environ.get("BACKUP_TIME", "03:10"),
         backup_doc_id=os.environ.get("BACKUP_DOC_ID", ""),
+        backup_wiki_token=os.environ.get("BACKUP_WIKI_TOKEN", ""),
         data_dir=_resolve_data_dir(os.environ.get("DATA_DIR", "./data")),
     )
 

@@ -49,11 +49,36 @@ def _write_local(data: str, data_dir: Path) -> Path:
     return path
 
 
+def _resolve_wiki_node(token: str, wiki_token: str) -> str:
+    """把 wiki 页面节点解析成底层 docx document_id。"""
+    resp = httpx.get(
+        f"{_OPEN_API}/wiki/v2/spaces/get_node",
+        params={"token": wiki_token},
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=20,
+    )
+    data = resp.json()
+    if data.get("code") != 0:
+        raise RuntimeError(f"解析 wiki 节点失败: code={data.get('code')} msg={data.get('msg')}")
+    node = data.get("data", {}).get("node", {})
+    if node.get("obj_type") != "docx":
+        raise RuntimeError(f"wiki 节点不是文档(docx): {node.get('obj_type')}")
+    return node["obj_token"]
+
+
 def ensure_backup_doc(conn: sqlite3.Connection, token: str) -> str:
-    """返回备份文档 ID。没有则自动创建一个。"""
+    """返回备份文档 ID。优先级：已缓存 > wiki 页面 > 自动创建。"""
     doc_id = db.config_get(conn, "backup_doc_id") or settings().backup_doc_id
     if doc_id:
         return doc_id
+
+    wiki = settings().backup_wiki_token or db.config_get(conn, "backup_wiki_token")
+    if wiki:
+        doc_id = _resolve_wiki_node(token, wiki)
+        db.config_set(conn, "backup_doc_id", doc_id)
+        logger.info("备份目标: wiki 页面 → docx %s", doc_id)
+        return doc_id
+
     resp = httpx.post(
         f"{_OPEN_API}/docx/v1/documents",
         headers={"Authorization": f"Bearer {token}"},
@@ -99,7 +124,11 @@ def _append_to_doc(token: str, doc_id: str, text: str) -> bool:
         json={"children": children, "index": -1},
         timeout=30,
     )
-    return append.json().get("code") == 0
+    data = append.json()
+    if data.get("code") != 0:
+        logger.warning("文档追加被拒: code=%s msg=%s", data.get("code"), data.get("msg"))
+        return False
+    return True
 
 
 def _upload_as_file(token: str, feishu, open_id: str, data: str) -> bool:
