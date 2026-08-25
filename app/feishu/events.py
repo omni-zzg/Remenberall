@@ -126,7 +126,7 @@ def _new_ws(conn: sqlite3.Connection, feishu: FeishuClient):
         s.feishu_app_secret,
         event_handler=event_handler,
         auto_reconnect=True,
-        log_level=logging.INFO,
+        log_level=lark.LogLevel.INFO,
     )
 
 

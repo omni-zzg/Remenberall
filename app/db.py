@@ -12,8 +12,13 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from contextlib import contextmanager
 from pathlib import Path
+
+# 写事务全局串行锁：连接允许多线程共享（check_same_thread=False）后，
+# 用这把锁保证同一时刻只有一个线程在写，避免交错事务。
+_WRITE_LOCK = threading.Lock()
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS entries (
@@ -65,7 +70,8 @@ CREATE INDEX IF NOT EXISTS idx_cards_entry    ON cards(entry_id);
 
 
 def connect(db_path: str | Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(db_path))
+    # check_same_thread=False：WS 回调线程 / daemon 线程 / to_thread 线程共用连接
+    conn = sqlite3.connect(str(db_path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
@@ -80,12 +86,13 @@ def init_db(conn: sqlite3.Connection) -> None:
 
 @contextmanager
 def transaction(conn: sqlite3.Connection):
-    try:
-        yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
+    with _WRITE_LOCK:
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
 
 
 # ---------- app_config ----------
@@ -96,12 +103,13 @@ def config_get(conn: sqlite3.Connection, key: str, default: str | None = None) -
 
 
 def config_set(conn: sqlite3.Connection, key: str, value: str) -> None:
-    conn.execute(
-        "INSERT INTO app_config(key, value) VALUES(?, ?) "
-        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        (key, value),
-    )
-    conn.commit()
+    with _WRITE_LOCK:
+        conn.execute(
+            "INSERT INTO app_config(key, value) VALUES(?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+        conn.commit()
 
 
 # ---------- 便捷查询 ----------

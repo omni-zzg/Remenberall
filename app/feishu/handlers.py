@@ -155,10 +155,11 @@ def _do_confirm(conn: sqlite3.Connection, feishu, open_id: str, card_id: int, ac
 
 
 def _do_discard(conn: sqlite3.Connection, feishu, open_id: str, card_id: int) -> str:
-    conn.execute(
-        "UPDATE cards SET status='archived', updated_at=datetime('now','localtime') WHERE id=?", (card_id,)
-    )
-    conn.commit()
+    with db.transaction(conn):
+        conn.execute(
+            "UPDATE cards SET status='archived', updated_at=datetime('now','localtime') WHERE id=?",
+            (card_id,),
+        )
     feishu.send_card(open_id, card_builder.draft_discarded_card())
     return "已丢弃"
 
@@ -169,10 +170,11 @@ def _do_rewrite(conn: sqlite3.Connection, feishu, open_id: str, c: dict) -> str:
     if not entry:
         feishu.send_card(open_id, card_builder.text_card("找不到原文，无法重写。", template="orange"))
         return "找不到原文"
-    conn.execute(
-        "UPDATE cards SET status='archived', updated_at=datetime('now','localtime') WHERE id=?", (c["id"],)
-    )
-    conn.commit()
+    with db.transaction(conn):
+        conn.execute(
+            "UPDATE cards SET status='archived', updated_at=datetime('now','localtime') WHERE id=?",
+            (c["id"],),
+        )
 
     async def _rewrite():
         try:
@@ -257,11 +259,12 @@ def _cmd_readonly(conn: sqlite3.Connection, feishu, open_id: str, rest: str) -> 
     if cid is None:
         feishu.send_text(open_id, "用法：`/仅重读 <id>`，id 用 `/列表` 查看。")
         return
-    conn.execute(
-        "UPDATE cards SET mode='readonly', updated_at=datetime('now','localtime') WHERE id=? AND status='active'",
-        (cid,),
-    )
-    conn.commit()
+    with db.transaction(conn):
+        conn.execute(
+            "UPDATE cards SET mode='readonly', updated_at=datetime('now','localtime') "
+            "WHERE id=? AND status='active'",
+            (cid,),
+        )
     feishu.send_text(open_id, f"卡片 #{cid} 已改为仅重读（不再出题）。")
 
 
@@ -270,8 +273,10 @@ def _cmd_delete(conn: sqlite3.Connection, feishu, open_id: str, rest: str) -> No
     if cid is None:
         feishu.send_text(open_id, "用法：`/删除 <id>`，id 用 `/列表` 查看。")
         return
-    conn.execute("UPDATE cards SET status='archived', updated_at=datetime('now','localtime') WHERE id=?", (cid,))
-    conn.commit()
+    with db.transaction(conn):
+        conn.execute(
+            "UPDATE cards SET status='archived', updated_at=datetime('now','localtime') WHERE id=?", (cid,)
+        )
     feishu.send_text(open_id, f"卡片 #{cid} 已删除。")
 
 
