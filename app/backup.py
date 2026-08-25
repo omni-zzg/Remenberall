@@ -118,7 +118,7 @@ def _upload_as_file(token: str, feishu, open_id: str, data: str) -> bool:
         return feishu.send_card(
             open_id,
             {
-                "schema": "2.0",
+                "config": {"wide_screen_mode": True},
                 "header": {"title": {"tag": "plain_text", "content": "今日备份"}},
                 "elements": [{"tag": "markdown", "content": "记忆库每日备份，见上方文件。"}],
             },

@@ -16,7 +16,6 @@ from . import cards as card_builder
 
 logger = logging.getLogger(__name__)
 
-_ENTRY_DRAFT_CAP = 5        # 一篇内容最多当场推送的草稿卡数量
 _SPOT_CHECK_N = 5           # /抽查 随机数量
 _RATING_DEDUP_SECONDS = 5   # 卡片回调防重复
 
@@ -70,12 +69,8 @@ def ingest_text(conn: sqlite3.Connection, feishu, open_id: str, text: str) -> No
 
     drafts = _pending_drafts(conn, entry_id=entry_id)
     total = len(drafts)
-    for i, c in enumerate(drafts[: _ENTRY_DRAFT_CAP], start=1):
+    for i, c in enumerate(drafts, start=1):
         feishu.send_card(open_id, card_builder.draft_card(c, i, total))
-    if total > _ENTRY_DRAFT_CAP:
-        feishu.send_card(
-            open_id, card_builder.text_card(f"还有 {total - _ENTRY_DRAFT_CAP} 条草稿未显示，发 `/草稿` 查看。")
-        )
 
 
 def _pending_drafts(conn: sqlite3.Connection, entry_id: int | None = None) -> list[dict]:

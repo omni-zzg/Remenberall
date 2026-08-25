@@ -27,9 +27,10 @@ def _note(content: str) -> dict:
 
 
 def _card(header_text: str, elements: list[dict], template: str = "blue") -> dict:
+    # 用 v1 卡片格式（无 schema 字段）。实测该飞书租户对 schema 2.0 卡片
+    # 返回 200621 解析错误，v1 格式稳定可用。
     return {
-        "schema": "2.0",
-        "config": {"update_multi": True},
+        "config": {"wide_screen_mode": True},
         "header": {
             "title": {"tag": "plain_text", "content": header_text},
             "template": template,

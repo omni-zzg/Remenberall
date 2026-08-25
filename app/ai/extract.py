@@ -11,14 +11,14 @@ from .client import AIError, chat_json
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = (
-    "你是知识提炼助手。用户会把想记住的内容发给你，你把它提炼成若干条「问题→答案」的复习卡片。\n"
+    "你是知识提炼助手。用户会把想记住的内容发给你，你把它提炼成一条「问题→答案」的复习卡片。\n"
     "要求：\n"
-    "1. 只提炼真正的知识要点，去掉客套、流水账和无关细节。\n"
+    "1. 用户一条消息只对应一张卡片：从内容里挑出最值得记住、最有价值的那一个点。\n"
     "2. 问题要具体、可自测（能用来判断自己是否真的记住）。\n"
     "3. 答案简洁准确，一句话到几句话即可，基于原文，不要编造。\n"
-    "4. summary 是对该条要点的一句话总结，用于被动重读。\n"
-    "5. 数量控制在 3~10 条；如果内容很短，少于 3 条也可以。\n"
-    "6. 只输出 JSON，不要任何额外说明。"
+    "4. summary 是对该点的一句话总结，用于被动重读。\n"
+    "5. 只输出 JSON：{\"cards\": [{\"question\": ..., \"answer\": ..., \"summary\": ...}]}，\n"
+    "   cards 数组里只放 1 条。不要任何额外说明。"
 )
 
 
@@ -54,7 +54,7 @@ def extract_cards(text: str, instruction: str | None = None) -> list[dict]:
         if not q or not a:
             continue
         cards.append({"question": q, "answer": a, "summary": s})
-    return cards[:10]
+    return cards[:1]  # 一条消息只对应一张知识卡
 
 
 def _clean(value: object) -> str:
